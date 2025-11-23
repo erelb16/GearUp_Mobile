@@ -1,0 +1,944 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInWithCustomToken, 
+  signInAnonymously, 
+  onAuthStateChanged,
+  signOut
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  query, 
+  where, 
+  onSnapshot, 
+  doc, 
+  updateDoc, 
+  orderBy, 
+  serverTimestamp,
+  deleteDoc,
+  setDoc,
+  getDocs,
+  arrayUnion,
+  arrayRemove
+} from 'firebase/firestore';
+import { 
+  Shield, 
+  Users, 
+  Package, 
+  QrCode, 
+  ClipboardList, 
+  AlertTriangle, 
+  CheckCircle, 
+  LogOut, 
+  Plus, 
+  Search, 
+  ArrowRightLeft,
+  History,
+  User,
+  X,
+  Zap,
+  HardHat,
+  GanttChart,
+  Edit,
+  Settings,
+  Lock,
+  UserPlus,
+  Trash2,
+  Moon,
+  Sun,
+  Tent,
+  Compass,
+  Accessibility, // Icon for accessibility
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  Eye
+} from 'lucide-react';
+
+// --- Firebase Setup ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// API Key
+const apiKey = "";
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+// --- Constants & Types ---
+const STATUS_LABELS = {
+  'serviceable': { label: 'תקין', color: 'bg-[#D9E7CB] text-[#2C3E2E] border border-[#B4CF9E] dark:bg-[#2C3E2E] dark:text-[#D9E7CB] dark:border-[#4A614C]' },
+  'damaged': { label: 'פגום', color: 'bg-[#F2D5D5] text-[#592E2E] border border-[#E6B3B3] dark:bg-[#3E2222] dark:text-[#F2D5D5] dark:border-[#613838]' },
+  'missing': { label: 'חסר', color: 'bg-[#F5E6CC] text-[#594426] border border-[#E6CC99] dark:bg-[#3E321C] dark:text-[#F5E6CC] dark:border-[#615233]' },
+  'maintenance': { label: 'בתיקון', color: 'bg-[#E6EBE6] text-[#3E4A42] border border-[#CDD6CD] dark:bg-[#2A332E] dark:text-[#C4CEC7] dark:border-[#45524A]' }
+};
+
+const INITIAL_ITEM_TYPES = {
+  'vest': 'אפוד',
+  'helmet': 'קסדה',
+  'weapon': 'נשק',
+  'nvg': 'אמר"ל',
+  'radio': 'קשר',
+  'general': 'כללי'
+};
+
+const ITEM_ICONS = {
+  'vest': Zap,
+  'helmet': HardHat,
+  'weapon': Shield,
+  'nvg': QrCode, 
+  'radio': Package,
+  'general': GanttChart
+};
+
+// --- Main Component ---
+export default function GearUp() {
+  const [user, setUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
+  
+  const [activeView, setActiveView] = useState('auth'); 
+  const [userRole, setUserRole] = useState(null); 
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [selectedItem, setSelectedItem] = useState(null);
+  
+  // Data State
+  const [groups, setGroups] = useState([]);
+  const [items, setItems] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [customItemTypes, setCustomItemTypes] = useState({}); 
+  const [loading, setLoading] = useState(true);
+  const [notification, setNotification] = useState(null);
+
+  // UI State
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showAddGroupModal, setShowAddGroupModal] = useState(false);
+  const [showAddTypeModal, setShowAddTypeModal] = useState(false); 
+  const [showDefectReport, setShowDefectReport] = useState(false); 
+  const [showGroupSettings, setShowGroupSettings] = useState(false);
+  const [isLLMLoading, setIsLLMLoading] = useState(false); 
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isDarkMode, setIsDarkMode] = useState(false); 
+  
+  // Accessibility State
+  const [showA11yMenu, setShowA11yMenu] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(1); // 1 = 100%
+  const [highContrast, setHighContrast] = useState(false);
+
+  // Auth UI State
+  const [authMode, setAuthMode] = useState('login'); 
+
+  // --- Styling Variables ---
+  // Dynamic Theme that responds to Dark Mode AND High Contrast
+  const theme = {
+    bg: highContrast ? (isDarkMode ? 'bg-black' : 'bg-white') : (isDarkMode ? 'bg-[#1A2421]' : 'bg-[#E8ECE9]'),
+    card: highContrast ? (isDarkMode ? 'bg-black border-2 border-white' : 'bg-white border-2 border-black') : (isDarkMode ? 'bg-[#2C3A33] border-[#3E4F46] shadow-xl' : 'bg-white border-white shadow-[0_8px_30px_rgb(0,0,0,0.04)]'),
+    text: highContrast ? (isDarkMode ? 'text-white' : 'text-black') : (isDarkMode ? 'text-[#E8ECE9]' : 'text-[#1A2421]'),
+    textSub: highContrast ? (isDarkMode ? 'text-yellow-300' : 'text-blue-900') : (isDarkMode ? 'text-[#8F9E96]' : 'text-[#6B7A72]'),
+    input: highContrast ? (isDarkMode ? 'bg-black border-2 border-white text-white' : 'bg-white border-2 border-black text-black') : (isDarkMode ? 'bg-[#131B18] text-[#E8ECE9] placeholder-[#5C6B64] focus:ring-[#C8E080]' : 'bg-[#F0F4F2] text-[#1A2421] placeholder-[#8F9E96] focus:bg-white focus:ring-[#2C3E2E]'),
+    header: highContrast ? (isDarkMode ? 'bg-black border-b-2 border-white' : 'bg-white border-b-2 border-black') : (isDarkMode ? 'bg-[#1A2421]/90 backdrop-blur-md border-[#2C3A33]' : 'bg-[#E8ECE9]/90 backdrop-blur-md border-white/50'),
+    modalBg: highContrast ? (isDarkMode ? 'bg-black border-2 border-white' : 'bg-white border-2 border-black') : (isDarkMode ? 'bg-[#2C3A33] border border-[#3E4F46]' : 'bg-white'),
+    accent: highContrast ? (isDarkMode ? 'text-yellow-400' : 'text-blue-700') : (isDarkMode ? 'text-[#C8E080]' : 'text-[#2C3E2E]'), 
+    
+    // Buttons
+    buttonPrimary: highContrast 
+      ? (isDarkMode ? 'bg-yellow-400 text-black border-2 border-white font-bold hover:bg-yellow-500' : 'bg-blue-700 text-white border-2 border-black font-bold hover:bg-blue-800')
+      : (isDarkMode 
+          ? 'bg-[#C8E080] hover:bg-[#B4D060] text-[#1A2421] shadow-[0_4px_20px_rgba(200,224,128,0.2)]' 
+          : 'bg-[#1A2421] hover:bg-[#2C3E2E] text-white shadow-[0_4px_20px_rgba(26,36,33,0.25)]'),
+    buttonSecondary: highContrast 
+      ? (isDarkMode ? 'bg-black text-white border-2 border-white' : 'bg-white text-black border-2 border-black')
+      : (isDarkMode 
+          ? 'bg-[#3E4F46] hover:bg-[#4A5E54] text-[#E8ECE9]' 
+          : 'bg-white hover:bg-[#F0F4F2] text-[#1A2421] border border-[#E8ECE9]'),
+    iconBg: highContrast ? (isDarkMode ? 'bg-white text-black' : 'bg-black text-white') : (isDarkMode ? 'bg-[#3E4F46] text-[#C8E080]' : 'bg-[#D9E7CB] text-[#2C3E2E]'),
+  };
+
+  // --- Auth Init ---
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth error:", error);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (!currentUser) {
+        setActiveView('auth');
+        setUserProfile(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // --- Data Listeners ---
+  useEffect(() => {
+    if (!user) return;
+    const groupsRef = collection(db, 'artifacts', appId, 'public', 'data', 'groups');
+    const qGroups = query(groupsRef); 
+    const unsubGroups = onSnapshot(qGroups, (snapshot) => {
+      const groupList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      groupList.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setGroups(groupList);
+      setLoading(false);
+    }, (err) => console.error("Groups error", err));
+    return () => unsubGroups();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !selectedGroup) return;
+    const itemsRef = collection(db, 'artifacts', appId, 'public', 'data', 'items');
+    const qItems = query(itemsRef); 
+    const unsubItems = onSnapshot(qItems, (snapshot) => {
+      const allItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const groupItems = allItems.filter(item => item.groupId === selectedGroup.id);
+      setItems(groupItems);
+    }, (err) => console.error("Items error", err));
+
+    const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
+    const qLogs = query(logsRef); 
+    const unsubLogs = onSnapshot(qLogs, (snapshot) => {
+      const allLogs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const groupLogs = allLogs.filter(log => log.groupId === selectedGroup.id);
+      groupLogs.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+      setLogs(groupLogs);
+    }, (err) => console.error("Logs error", err));
+    return () => { unsubItems(); unsubLogs(); };
+  }, [user, selectedGroup]);
+
+  useEffect(() => {
+    if (!user) return;
+    const typesRef = collection(db, 'artifacts', appId, 'public', 'data', 'custom_types');
+    const qTypes = query(typesRef);
+    const unsubTypes = onSnapshot(qTypes, (snapshot) => {
+      const types = {};
+      snapshot.forEach(doc => { types[doc.id] = doc.data().label; });
+      setCustomItemTypes(types);
+    }, (err) => console.error("Custom Types error", err));
+    return () => unsubTypes();
+  }, [user]);
+
+  // --- Helpers ---
+  const allItemTypes = { ...INITIAL_ITEM_TYPES, ...customItemTypes };
+
+  const showToast = (msg, type = 'success') => {
+    setNotification({ msg, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const toggleTheme = () => setIsDarkMode(!isDarkMode);
+
+  // --- A11y Actions ---
+  const handleZoomIn = () => setZoomLevel(prev => Math.min(prev + 0.1, 1.5));
+  const handleZoomOut = () => setZoomLevel(prev => Math.max(prev - 0.1, 0.8));
+  const handleResetZoom = () => { setZoomLevel(1); setHighContrast(false); };
+  const toggleHighContrast = () => setHighContrast(!highContrast);
+
+  // --- Auth Logic ---
+  const handleAppRegister = async (e) => {
+    e.preventDefault();
+    const username = e.target.username.value.trim();
+    const password = e.target.password.value.trim();
+    const displayName = e.target.displayName.value.trim();
+    if (!username || !password || !displayName) return showToast('נא למלא את כל השדות', 'error');
+    try {
+      const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'app_users');
+      const q = query(usersRef, where("username", "==", username));
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) return showToast('שם המשתמש תפוס', 'error');
+      await addDoc(usersRef, { username, password, displayName, uid: user.uid, role: 'commander', createdAt: serverTimestamp() });
+      const newProfile = { username, displayName, uid: user.uid, role: 'commander' };
+      setUserProfile(newProfile);
+      setUserRole('commander');
+      setActiveView('groups');
+      showToast(`ברוך הבא, ${displayName}!`);
+    } catch (err) { showToast('שגיאה בהרשמה', 'error'); }
+  };
+
+  const handleAppLogin = async (e) => {
+    e.preventDefault();
+    const username = e.target.username.value.trim();
+    const password = e.target.password.value.trim();
+    try {
+      const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'app_users');
+      const q = query(usersRef, where("username", "==", username), where("password", "==", password));
+      const querySnapshot = await getDocs(q);
+      if (querySnapshot.empty) return showToast('שם משתמש או סיסמה שגויים', 'error');
+      const userData = querySnapshot.docs[0].data();
+      setUserProfile(userData);
+      setUserRole(userData.role);
+      setActiveView('groups');
+      showToast(`התחברת בהצלחה, ${userData.displayName}`);
+    } catch (err) { showToast('שגיאה בהתחברות', 'error'); }
+  };
+  
+  const handleGuestLogin = () => {
+    setUserProfile({ displayName: 'אורח', role: 'soldier', uid: 'guest' });
+    setUserRole('soldier');
+    setActiveView('groups');
+    showToast('התחברת כאורח (צפייה בלבד)');
+  };
+
+  // --- Permissions Logic ---
+  const canEditGroup = (group) => {
+    if (!userProfile || userRole !== 'commander') return false;
+    return group.createdBy === userProfile.uid || (group.authorizedUsers && group.authorizedUsers.includes(userProfile.username));
+  };
+  const isGroupOwner = (group) => { return userProfile && group.createdBy === userProfile.uid; };
+
+  // --- CRUD Actions ---
+  const handleCreateGroupSubmit = async (e) => {
+    e.preventDefault();
+    const name = e.target.groupName.value;
+    if (!name) return showToast('שם קבוצה לא יכול להיות ריק.', 'error');
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'groups'), {
+        name, createdAt: serverTimestamp(), itemCount: 0, createdBy: userProfile.uid, ownerName: userProfile.displayName, authorizedUsers: []
+      });
+      setShowAddGroupModal(false);
+      showToast('קבוצה נוצרה בהצלחה');
+    } catch (err) { showToast('שגיאה ביצירת קבוצה', 'error'); }
+  };
+
+  const handleAddEditorToGroup = async (e) => {
+    e.preventDefault();
+    const usernameToAdd = e.target.editorUsername.value.trim();
+    if (!usernameToAdd) return;
+    try {
+      const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'app_users');
+      const q = query(usersRef, where("username", "==", usernameToAdd));
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) return showToast('משתמש לא נמצא', 'error');
+      const groupRef = doc(db, 'artifacts', appId, 'public', 'data', 'groups', selectedGroup.id);
+      await updateDoc(groupRef, { authorizedUsers: arrayUnion(usernameToAdd) });
+      setSelectedGroup(prev => ({ ...prev, authorizedUsers: [...(prev.authorizedUsers || []), usernameToAdd] }));
+      e.target.reset();
+      showToast(`נוספה הרשאה ל-${usernameToAdd}`);
+    } catch (err) { showToast('שגיאה בהוספת הרשאה', 'error'); }
+  };
+
+  const handleRemoveEditor = async (usernameToRemove) => {
+     try {
+      const groupRef = doc(db, 'artifacts', appId, 'public', 'data', 'groups', selectedGroup.id);
+      await updateDoc(groupRef, { authorizedUsers: arrayRemove(usernameToRemove) });
+       setSelectedGroup(prev => ({ ...prev, authorizedUsers: prev.authorizedUsers.filter(u => u !== usernameToRemove) }));
+      showToast(`הוסרה הרשאה מ-${usernameToRemove}`);
+     } catch (err) { showToast('שגיאה בהסרת הרשאה', 'error'); }
+  };
+
+  const handleCreateTypeSubmit = async (e) => {
+    e.preventDefault();
+    const label = e.target.typeName.value;
+    if (!label) return;
+    try {
+      const newTypeKey = `custom_${Date.now()}`;
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom_types', newTypeKey), { label, createdBy: user.uid, createdAt: serverTimestamp() });
+      setShowAddTypeModal(false);
+      showToast(`סוג ציוד חדש "${label}" נוסף בהצלחה`);
+    } catch (err) { showToast('שגיאה בהוספת סוג ציוד', 'error'); }
+  };
+
+  const handleAddItem = async (e) => {
+    e.preventDefault();
+    if (!canEditGroup(selectedGroup)) return showToast('אין לך הרשאה לערוך קבוצה זו', 'error');
+    const form = e.target;
+    const newItem = {
+      name: form.itemName.value, type: form.itemType.value, serial: form.serial.value, status: 'serviceable', groupId: selectedGroup.id, assignedTo: null, assignedToName: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp()
+    };
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), newItem);
+      await addLog('יצירת פריט', `הוסיף את ${newItem.name} (מ"צ: ${newItem.serial})`);
+      setShowAddItem(false);
+      showToast('פריט נוסף למלאי');
+    } catch (err) { showToast('שגיאה בהוספת פריט', 'error'); }
+  };
+
+  const handleAssignItem = async (soldierName, soldierId) => {
+    if (!selectedItem || !canEditGroup(selectedGroup)) return;
+    try {
+      const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', selectedItem.id);
+      await updateDoc(itemRef, { assignedTo: soldierId, assignedToName: soldierName, updatedAt: serverTimestamp() });
+      await addLog('החתמה', `החתים את ${soldierName} על ${selectedItem.name}`);
+      setShowAssignModal(false); setSelectedItem(null); showToast('החתמה בוצעה');
+    } catch (err) { showToast('שגיאה בהחתמה', 'error'); }
+  };
+
+  const handleReturnItem = async (item) => {
+    if (!canEditGroup(selectedGroup)) return;
+    if (!confirm(`האם לזכות את ${item.assignedToName} מ-${item.name}?`)) return; 
+    try {
+      const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
+      await updateDoc(itemRef, { assignedTo: null, assignedToName: null, updatedAt: serverTimestamp() });
+      await addLog('החזרה', `זיכה את ${item.assignedToName} מ-${item.name}`);
+      showToast('הציוד הוחזר למלאי');
+    } catch (err) { showToast('שגיאה בהחזרה', 'error'); }
+  };
+
+  const handleDefectReport = (item) => { setSelectedItem(item); setShowDefectReport(true); };
+  
+  const handleStatusChange = async (item, newStatus) => {
+    if (!canEditGroup(selectedGroup)) return;
+    try {
+      const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
+      await updateDoc(itemRef, { status: newStatus, updatedAt: serverTimestamp() });
+      await addLog('שינוי סטטוס', `שינה סטטוס ל-${STATUS_LABELS[newStatus].label} עבור ${item.name}`);
+      showToast('סטטוס עודכן');
+    } catch (err) { showToast('שגיאה בעדכון סטטוס', 'error'); }
+  };
+
+  const addLog = async (action, details) => {
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), {
+      action, details, groupId: selectedGroup.id, userId: userProfile.uid, userName: userProfile.displayName, timestamp: serverTimestamp()
+    });
+  };
+
+  // --- LLM Helpers ---
+  const generateDefectReport = async (item, userDescription) => {
+    setIsLLMLoading(true);
+    const systemPrompt = `אתה מומחה לוגיסטיקה. נסח דו"ח פגם רשמי.`;
+    const userQuery = `הציוד: ${item.name}, מ"צ: ${item.serial}. פגם: "${userDescription}".`;
+    const payload = { contents: [{ parts: [{ text: userQuery }] }], systemInstruction: { parts: [{ text: systemPrompt }] } };
+    try {
+        const response = await fetch(GEMINI_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const result = await response.json();
+        setIsLLMLoading(false);
+        return result.candidates?.[0]?.content?.parts?.[0]?.text || "שגיאה בניסוח";
+    } catch(e) { setIsLLMLoading(false); return "שגיאה"; }
+  };
+
+  const filteredItems = useMemo(() => {
+    if (!searchTerm) return items;
+    return items.filter(i => i.name.includes(searchTerm) || i.serial.includes(searchTerm) || (i.assignedToName && i.assignedToName.includes(searchTerm)));
+  }, [items, searchTerm]);
+
+  const getGroupStats = (groupId) => {
+    const groupItems = items.filter(i => i.groupId === groupId);
+    return {
+      vests: groupItems.filter(i => i.type === 'vest').length,
+      helmets: groupItems.filter(i => i.type === 'helmet').length,
+      weapons: groupItems.filter(i => i.type === 'weapon').length,
+      total: groupItems.length,
+    };
+  };
+
+  // --- VIEWS ---
+
+  // Global Wrapper for Scaling
+  const AppContent = ({ children }) => (
+    <div 
+      className={`min-h-screen flex flex-col font-sans transition-colors duration-500 ${theme.bg}`} 
+      dir="rtl"
+      style={{ zoom: zoomLevel }} // Apply scaling here
+    >
+        {children}
+        
+        {/* Accessibility Floating Button (Always visible) */}
+        <div className="fixed bottom-6 left-6 z-[100] flex flex-col items-start gap-2">
+            {showA11yMenu && (
+                <div className={`mb-2 p-4 rounded-2xl shadow-2xl border animate-in slide-in-from-bottom-4 ${theme.card} min-w-[200px]`}>
+                    <h4 className={`text-sm font-bold mb-3 flex items-center gap-2 ${theme.text}`}>
+                        <Accessibility size={16}/> נגישות
+                    </h4>
+                    <div className="space-y-2">
+                        <button onClick={handleZoomIn} className={`w-full flex items-center justify-between p-2 rounded-lg ${theme.buttonSecondary} text-sm`}>
+                            <span>הגדל טקסט</span>
+                            <ZoomIn size={16}/>
+                        </button>
+                        <button onClick={handleZoomOut} className={`w-full flex items-center justify-between p-2 rounded-lg ${theme.buttonSecondary} text-sm`}>
+                            <span>הקטן טקסט</span>
+                            <ZoomOut size={16}/>
+                        </button>
+                        <button onClick={toggleHighContrast} className={`w-full flex items-center justify-between p-2 rounded-lg ${theme.buttonSecondary} text-sm ${highContrast ? 'ring-2 ring-blue-500' : ''}`}>
+                            <span>ניגודיות גבוהה</span>
+                            <Eye size={16}/>
+                        </button>
+                        <div className="h-px bg-gray-200 dark:bg-gray-700 my-2"></div>
+                        <button onClick={handleResetZoom} className={`w-full flex items-center justify-between p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 text-sm`}>
+                            <span>אפס הגדרות</span>
+                            <RotateCcw size={16}/>
+                        </button>
+                    </div>
+                </div>
+            )}
+            <button 
+                onClick={() => setShowA11yMenu(!showA11yMenu)}
+                className={`p-4 rounded-full shadow-xl transition-transform hover:scale-110 ${theme.buttonPrimary}`}
+                title="תפריט נגישות"
+            >
+                <Accessibility size={24} />
+            </button>
+        </div>
+    </div>
+  );
+
+  if (activeView === 'auth') {
+    return (
+      <AppContent>
+        <div className={`w-full max-w-md p-10 rounded-[3rem] shadow-2xl relative overflow-hidden ${theme.card} transition-all duration-500 mx-auto my-auto mt-20`}>
+          
+          {/* Decorative background blob - Reduced opacity in High Contrast */}
+          {!highContrast && (
+             <div className={`absolute -top-20 -left-20 w-64 h-64 rounded-full blur-3xl opacity-20 ${isDarkMode ? 'bg-[#C8E080]' : 'bg-[#2C3E2E]'}`}></div>
+          )}
+
+          {/* Fixed Z-Index for Theme Toggle */}
+          <button onClick={toggleTheme} className={`absolute top-8 left-8 p-3 rounded-full ${theme.buttonSecondary} transition-all hover:scale-110 z-50`}>
+            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+
+          <div className="flex justify-center mb-8 relative z-10">
+            {/* --- CUSTOM ICON START --- */}
+            <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative overflow-hidden ${highContrast ? (isDarkMode ? 'bg-white' : 'bg-black') : 'bg-gradient-to-br from-[#2C3A33] to-[#1A2421]'} border border-[#4A614C]/30`}>
+                {!highContrast && (
+                    <>
+                        <div className="absolute inset-0 rounded-[2rem] shadow-[inset_0_0_20px_rgba(200,224,128,0.15)] pointer-events-none"></div>
+                        <div className="absolute -bottom-4 -right-4 w-12 h-12 bg-[#C8E080]/20 blur-md rounded-full"></div>
+                    </>
+                )}
+                <Shield size={48} strokeWidth={2.5} className={`${highContrast ? (isDarkMode ? 'text-black' : 'text-white') : 'text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]'} relative z-10`} />
+            </div>
+            {/* --- CUSTOM ICON END --- */}
+          </div>
+          
+          <h1 className={`text-4xl font-bold text-center mb-2 tracking-tight ${theme.text}`}>GearUp</h1>
+          <p className={`${theme.textSub} text-center mb-10 text-lg`}>ניהול ציוד למקצוענים</p>
+          
+          <div className="relative z-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
+            <form onSubmit={authMode === 'login' ? handleAppLogin : handleAppRegister} className="space-y-5">
+              {authMode === 'register' && (
+                <div>
+                  <input name="displayName" required className={`w-full rounded-full px-6 py-4 outline-none text-lg transition-all duration-300 placeholder:text-opacity-60 ${theme.input}`} placeholder="שם מלא" />
+                </div>
+              )}
+              <div>
+                <input name="username" required className={`w-full rounded-full px-6 py-4 outline-none text-lg transition-all duration-300 placeholder:text-opacity-60 ${theme.input}`} placeholder="שם משתמש" />
+              </div>
+              <div>
+                <input name="password" type="password" required className={`w-full rounded-full px-6 py-4 outline-none text-lg transition-all duration-300 placeholder:text-opacity-60 ${theme.input}`} placeholder="סיסמה" />
+              </div>
+              <button type="submit" className={`w-full py-4 rounded-full font-bold text-lg shadow-xl transition-all hover:scale-[1.02] active:scale-95 ${theme.buttonPrimary}`}>
+                {authMode === 'login' ? 'התחברות' : 'יצירת חשבון'}
+              </button>
+            </form>
+
+            <div className="mt-10 text-center space-y-6">
+              <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className={`text-sm font-bold hover:underline underline-offset-4 ${theme.accent}`}>
+                {authMode === 'login' ? 'מפקד חדש? הירשם כאן' : 'יש לך כבר חשבון? התחבר'}
+              </button>
+              
+              <button onClick={handleGuestLogin} className={`text-sm flex items-center justify-center gap-2 w-full py-3 rounded-full font-medium opacity-70 hover:opacity-100 transition-opacity ${theme.text}`}>
+                כניסת אורח (צפייה בלבד)
+              </button>
+            </div>
+          </div>
+        </div>
+      </AppContent>
+    );
+  }
+
+  return (
+    <AppContent>
+      {/* App Header - Clean & Blended */}
+      <header className={`sticky top-0 z-30 transition-colors duration-500 ${theme.header} border-b-0`}>
+        <div className="max-w-5xl mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            {activeView !== 'groups' && (
+              <button onClick={() => { setActiveView('groups'); setSelectedGroup(null); }} className={`p-3 rounded-full transition-all hover:scale-110 ${theme.buttonSecondary}`}>
+                <ArrowRightLeft size={22} />
+              </button>
+            )}
+            <div className={`font-bold text-2xl flex items-center gap-3 ${theme.text}`}>
+              {/* Small Header Logo Style */}
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-md relative overflow-hidden ${highContrast ? (isDarkMode ? 'bg-white border-black' : 'bg-black border-white') : 'bg-gradient-to-br from-[#2C3A33] to-[#1A2421] border border-[#4A614C]/30'}`}>
+                 {!highContrast && <div className="absolute inset-0 shadow-[inset_0_0_8px_rgba(200,224,128,0.1)]"></div>}
+                 <Shield size={20} className={`${highContrast ? (isDarkMode ? 'text-black' : 'text-white') : 'text-white drop-shadow-md'}`} strokeWidth={2.5} />
+              </div>
+              <span className="tracking-tight">{selectedGroup ? selectedGroup.name : 'GearUp'}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col items-end hidden sm:flex">
+                <div className={`text-sm font-bold ${theme.text}`}>{userProfile?.displayName || 'אורח'}</div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${userRole === 'commander' ? (highContrast ? 'bg-black text-white' : 'bg-[#C8E080] text-[#1A2421]') : 'bg-gray-200 text-gray-600'}`}>
+                {userRole === 'commander' ? 'מנהל' : 'משתמש'}
+                </span>
+            </div>
+            <button onClick={toggleTheme} className={`p-3 rounded-full transition-all hover:rotate-12 ${theme.buttonSecondary}`}>
+                {isDarkMode ? <Sun size={22} /> : <Moon size={22} />}
+            </button>
+            <button onClick={() => setActiveView('auth')} className={`p-3 rounded-full transition-all hover:bg-red-50 text-[#F2D5D5] hover:text-red-500`}>
+              <LogOut size={22} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Toast */}
+      {notification && (
+        <div className={`fixed top-28 left-1/2 transform -translate-x-1/2 px-8 py-4 rounded-full shadow-2xl z-50 flex items-center gap-4 animate-bounce ${notification.type === 'error' ? 'bg-[#3E2222] text-[#F2D5D5] border border-[#613838]' : 'bg-[#2C3E2E] text-[#D9E7CB] border border-[#4A614C]'}`}>
+          {notification.type === 'error' ? <AlertTriangle size={20} /> : <CheckCircle size={20} />}
+          <span className="font-bold">{notification.msg}</span>
+        </div>
+      )}
+
+      <main className="flex-1 max-w-5xl mx-auto w-full p-6 space-y-8">
+        
+        {/* Groups View - Grid Layout */}
+        {activeView === 'groups' && (
+          <>
+            <div className="flex flex-col sm:flex-row gap-4 items-center">
+                <div className="relative w-full">
+                    <Search className={`absolute top-1/2 right-6 transform -translate-y-1/2 ${theme.textSub}`} size={22} />
+                    <input 
+                        placeholder="חיפוש מחלקה או צוות..." 
+                        className={`w-full pl-6 pr-16 py-5 rounded-[2rem] outline-none text-lg shadow-sm transition-all focus:shadow-lg ${theme.input}`}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
+                {userRole === 'commander' && (
+                    <button 
+                        onClick={() => setShowAddGroupModal(true)} 
+                        className={`p-5 rounded-[2rem] shadow-xl transition-transform hover:scale-105 active:scale-95 flex-shrink-0 ${theme.buttonPrimary}`}
+                    >
+                        <Plus size={28} />
+                    </button>
+                )}
+            </div>
+
+            {loading ? (
+              <div className={`text-center py-20 ${theme.textSub} text-lg animate-pulse`}>טוען נתונים...</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {groups.filter(g => g.name.includes(searchTerm)).map(group => {
+                  const stats = getGroupStats(group.id); 
+                  return (
+                    <div 
+                      key={group.id}
+                      onClick={() => { setSelectedGroup(group); setActiveView('inventory'); }}
+                      className={`p-8 rounded-[2.5rem] transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98] duration-300 group relative overflow-hidden ${theme.card}`}
+                    >
+                      {/* Decorative circle - Hidden in high contrast */}
+                      {!highContrast && (
+                        <div className={`absolute -right-10 -top-10 w-32 h-32 rounded-full opacity-10 group-hover:scale-150 transition-transform duration-500 ${isDarkMode ? 'bg-[#C8E080]' : 'bg-[#2C3E2E]'}`}></div>
+                      )}
+
+                      <div className="flex justify-between items-start mb-6 relative z-10">
+                        <div>
+                            <h3 className={`font-bold text-2xl ${theme.text}`}>{group.name}</h3>
+                            <p className={`text-sm mt-1 font-medium ${theme.textSub}`}>מנהל: {group.ownerName || 'לא ידוע'}</p>
+                        </div>
+                        <div className={`p-3 rounded-full ${theme.iconBg}`}>
+                            <ArrowRightLeft size={20} className="transform rotate-180" />
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-3 relative z-10">
+                        {[
+                            { icon: Shield, val: stats.weapons, label: 'נשקים' },
+                            { icon: Zap, val: stats.vests, label: 'אפודים' },
+                            { icon: HardHat, val: stats.helmets, label: 'קסדות' }
+                        ].map((s, idx) => (
+                            <div key={idx} className={`flex flex-col items-center justify-center p-3 rounded-2xl aspect-square ${highContrast ? 'border border-current' : (isDarkMode ? 'bg-[#1A2421]/50' : 'bg-[#F0F4F2]')}`}>
+                                <s.icon size={22} className={theme.accent} />
+                                <span className={`font-bold text-lg mt-1 ${theme.text}`}>{s.val}</span>
+                                <span className={`text-[10px] font-bold uppercase tracking-wide ${theme.textSub}`}>{s.label}</span>
+                            </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Inventory View */}
+        {activeView === 'inventory' && selectedGroup && (
+          <div className="space-y-6">
+            
+            <div className="flex justify-between items-center">
+                <h2 className={`text-3xl font-bold tracking-tight ${theme.text}`}>{selectedGroup.name}</h2>
+                {isGroupOwner(selectedGroup) && (
+                    <button onClick={() => setShowGroupSettings(true)} className={`px-5 py-3 rounded-full flex items-center gap-2 text-sm font-bold transition-colors ${theme.buttonSecondary}`}>
+                        <Settings size={18} /> ניהול
+                    </button>
+                )}
+            </div>
+
+            {!canEditGroup(selectedGroup) && userRole === 'commander' && (
+                <div className={`p-5 rounded-3xl flex items-center gap-3 text-sm border ${isDarkMode ? 'bg-[#3E321C]/30 text-[#F5E6CC] border-[#615233]' : 'bg-[#F5E6CC]/50 text-[#594426] border-[#E6CC99]'}`}>
+                    <Lock size={20} />
+                    <span>צפייה בלבד - אין לך הרשאת עריכה בקבוצה זו.</span>
+                </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1 relative">
+                <Search className={`absolute top-1/2 right-6 transform -translate-y-1/2 ${theme.textSub}`} size={22} />
+                <input 
+                  placeholder="חיפוש ציוד..." 
+                  className={`w-full pl-6 pr-16 py-4 rounded-[2rem] outline-none shadow-sm focus:shadow-md transition-all text-lg ${theme.input}`}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              {canEditGroup(selectedGroup) && (
+                <button onClick={() => setShowAddItem(true)} className={`px-8 py-4 rounded-[2rem] shadow-lg flex items-center justify-center transition-transform active:scale-95 ${theme.buttonPrimary}`}>
+                  <Plus size={28} />
+                </button>
+              )}
+            </div>
+            
+            <div className={`rounded-[2.5rem] shadow-sm border overflow-hidden ${theme.card}`}>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-right">
+                  <thead className={`backdrop-blur-sm border-b ${isDarkMode ? 'bg-[#1A2421]/50 border-[#3E4F46]' : 'bg-[#F0F4F2]/80 border-[#E8ECE9]'}`}>
+                    <tr>
+                      <th className={`p-6 font-bold text-base ${theme.textSub}`}>פריט</th>
+                      <th className={`p-6 font-bold text-base ${theme.textSub}`}>משויך ל-</th>
+                      <th className={`p-6 text-center font-bold text-base ${theme.textSub}`}>סטטוס</th>
+                      <th className={`p-6 text-center font-bold text-base ${theme.textSub}`}>פעולות</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`divide-y ${isDarkMode ? 'divide-[#3E4F46]' : 'divide-[#E8ECE9]'}`}>
+                    {filteredItems.map(item => (
+                      <tr key={item.id} className={`transition-colors ${isDarkMode ? 'hover:bg-[#2C3A33]' : 'hover:bg-[#F7F9F8]'}`}>
+                        <td className="p-6">
+                          <div className={`font-bold text-lg ${theme.text} flex items-center gap-3`}>
+                             <div className={`p-2 rounded-xl ${theme.iconBg}`}>
+                                {React.createElement(ITEM_ICONS[item.type] || Package, { size: 20 })}
+                             </div>
+                             {item.name}
+                          </div>
+                          <div className={`text-xs font-mono mt-1 pr-12 ${theme.textSub}`}>{item.serial}</div>
+                        </td>
+                        <td className="p-6">
+                          {item.assignedToName ? (
+                            <div className={`font-bold ${theme.text} px-3 py-1.5 rounded-xl inline-block ${isDarkMode ? 'bg-[#1A2421]' : 'bg-[#E8ECE9]'}`}>{item.assignedToName}</div>
+                          ) : (
+                            <span className={`text-sm font-medium opacity-60 ${theme.textSub}`}>במחסן</span>
+                          )}
+                        </td>
+                        <td className="p-6 text-center">
+                            <span className={`inline-flex px-4 py-1.5 rounded-full text-sm font-bold ${STATUS_LABELS[item.status].color}`}>
+                                {STATUS_LABELS[item.status].label}
+                            </span>
+                        </td>
+                        <td className="p-6">
+                          <div className="flex items-center justify-center gap-2">
+                            {canEditGroup(selectedGroup) ? (
+                              <>
+                                {item.assignedTo ? (
+                                  <button onClick={() => handleReturnItem(item)} className="p-3 text-[#F2D5D5] bg-[#3E2222] rounded-2xl hover:bg-[#613838] transition-colors shadow-sm">
+                                    <LogOut size={20} />
+                                  </button>
+                                ) : (
+                                  <button onClick={() => { setSelectedItem(item); setShowAssignModal(true); }} className={`p-3 rounded-2xl transition-colors shadow-sm ${theme.buttonPrimary}`}>
+                                    <QrCode size={20} />
+                                  </button>
+                                )}
+                                <button onClick={() => handleDefectReport(item)} className={`p-3 rounded-2xl transition-colors shadow-sm ${theme.buttonSecondary}`}>
+                                    <AlertTriangle size={20} />
+                                </button>
+                              </>
+                            ) : (
+                                <span className={`text-xs ${theme.textSub}`}>---</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {filteredItems.length === 0 && (
+                  <div className={`p-16 text-center text-lg font-medium ${theme.textSub}`}>לא נמצאו פריטים במלאי</div>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-6">
+              <h3 className={`text-xl font-bold mb-6 flex items-center gap-3 ${theme.text}`}>
+                <History size={24} className={theme.textSub} />
+                היסטוריית פעולות
+              </h3>
+              <div className={`rounded-[2rem] border p-6 max-h-80 overflow-y-auto space-y-5 ${theme.card}`}>
+                {logs.map(log => (
+                  <div key={log.id} className={`flex items-start gap-4 text-sm pb-4 border-b last:border-0 last:pb-0 ${isDarkMode ? 'border-[#3E4F46]' : 'border-[#E8ECE9]'}`}>
+                    <div className={`mt-1 p-2 rounded-full ${log.action === 'החתמה' ? 'bg-[#2C3E2E] text-[#D9E7CB]' : log.action === 'החזרה' ? 'bg-[#2A332E] text-[#C4CEC7]' : 'bg-[#3E2222] text-[#F2D5D5]'}`}>
+                      {log.action === 'החתמה' ? <CheckCircle size={16} /> : 
+                       log.action === 'החזרה' ? <LogOut size={16} /> :
+                       <AlertTriangle size={16} />}
+                    </div>
+                    <div>
+                      <div className={`font-bold text-base ${theme.text}`}>{log.action} <span className={`font-normal text-xs opacity-60`}>({log.userName})</span></div>
+                      <div className={`${theme.textSub} mt-1`}>{log.details}</div>
+                      <div className={`text-[10px] mt-2 font-bold uppercase tracking-wide opacity-50 ${theme.textSub}`}>
+                        {log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString('he-IL') : 'עכשיו'}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* --- Dynamic Modals Wrapper --- */}
+      {[showAddItem, showAssignModal, showAddGroupModal, showAddTypeModal, showDefectReport, showGroupSettings].some(Boolean) && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-lg animate-in fade-in duration-300" onClick={() => {
+                setShowAddItem(false); setShowAssignModal(false); setShowAddGroupModal(false); setShowAddTypeModal(false); setShowDefectReport(false); setShowGroupSettings(false);
+            }} />
+            
+            {/* Add Item Modal */}
+            {showAddItem && (
+                <div className={`relative w-full max-w-md p-8 rounded-[3rem] shadow-2xl animate-in zoom-in-95 duration-300 ${theme.modalBg} ${theme.text}`}>
+                    <h3 className="text-2xl font-bold mb-8 text-center">הוספת ציוד חדש</h3>
+                    <form onSubmit={handleAddItem} className="space-y-5">
+                        <input required name="itemName" className={`w-full rounded-full px-6 py-4 outline-none text-lg ${theme.input}`} placeholder="שם הפריט" />
+                        <div className="flex gap-3">
+                            <select name="itemType" className={`flex-1 rounded-full px-6 py-4 outline-none text-lg appearance-none ${theme.input}`}>
+                                {Object.entries(allItemTypes).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+                            </select>
+                            <button type="button" onClick={() => setShowAddTypeModal(true)} className={`p-4 rounded-full aspect-square flex items-center justify-center ${theme.buttonSecondary}`}><Plus size={24}/></button>
+                        </div>
+                        <input required name="serial" className={`w-full rounded-full px-6 py-4 outline-none text-lg ${theme.input}`} placeholder="מספר סידורי" />
+                        <button className={`w-full py-5 rounded-full font-bold text-xl mt-4 shadow-lg transition-transform hover:scale-[1.02] ${theme.buttonPrimary}`}>הוסף למלאי</button>
+                    </form>
+                    <button onClick={() => setShowAddItem(false)} className="absolute top-6 left-6 p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><X size={24}/></button>
+                </div>
+            )}
+
+            {showAssignModal && selectedItem && (
+                <div className={`relative w-full max-w-md p-8 rounded-[3rem] shadow-2xl animate-in zoom-in-95 duration-300 ${theme.modalBg} ${theme.text}`}>
+                    <h3 className="text-2xl font-bold mb-2 text-center">החתמת ציוד</h3>
+                    <p className={`text-center mb-8 ${theme.textSub}`}>{selectedItem.name} - {selectedItem.serial}</p>
+                    <div className="space-y-3 max-h-72 overflow-y-auto pr-2">
+                        {['ישראל ישראלי', 'משה כהן', 'דוד לוי', 'יוסי אברהמי'].map((s, idx) => (
+                            <button key={idx} onClick={() => handleAssignItem(s, `user_${idx}`)} className={`w-full flex justify-between items-center p-4 rounded-2xl border transition-all hover:scale-[1.02] ${isDarkMode ? 'border-[#3E4F46] hover:bg-[#2C3A33]' : 'border-[#E8ECE9] hover:bg-white'}`}>
+                                <span className="font-bold text-lg">{s}</span>
+                                <div className={`p-2 rounded-full ${theme.iconBg}`}><User size={16} /></div>
+                            </button>
+                        ))}
+                    </div>
+                    <button onClick={() => {setShowAssignModal(false); setSelectedItem(null);}} className="absolute top-6 left-6 p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><X size={24}/></button>
+                </div>
+            )}
+
+            {showAddGroupModal && (
+                <div className={`relative w-full max-w-md p-8 rounded-[3rem] shadow-2xl animate-in zoom-in-95 duration-300 ${theme.modalBg} ${theme.text}`}>
+                    <h3 className="text-2xl font-bold mb-8 text-center">יצירת קבוצה חדשה</h3>
+                    <form onSubmit={handleCreateGroupSubmit} className="space-y-6">
+                        <div>
+                            <label className={`block text-sm font-bold mb-2 mr-4 ${theme.textSub}`}>שם הקבוצה</label>
+                            <input required name="groupName" className={`w-full rounded-full px-6 py-4 outline-none text-lg ${theme.input}`} placeholder="לדוגמא: מחלקה 3" autoFocus />
+                        </div>
+                        <button className={`w-full py-5 rounded-full font-bold text-xl shadow-lg transition-transform hover:scale-[1.02] ${theme.buttonPrimary}`}>צור קבוצה</button>
+                    </form>
+                    <button onClick={() => setShowAddGroupModal(false)} className="absolute top-6 left-6 p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><X size={24}/></button>
+                </div>
+            )}
+
+            {showAddTypeModal && (
+                <div className={`relative w-full max-w-sm p-8 rounded-[3rem] shadow-2xl animate-in zoom-in-95 duration-300 ${theme.modalBg} ${theme.text}`}>
+                    <h3 className="text-xl font-bold mb-6 text-center">סוג ציוד חדש</h3>
+                    <form onSubmit={handleCreateTypeSubmit} className="space-y-5">
+                        <input required name="typeName" className={`w-full rounded-full px-6 py-4 outline-none text-lg ${theme.input}`} placeholder="שם הסוג" autoFocus />
+                        <button className={`w-full py-4 rounded-full font-bold text-lg shadow-lg ${theme.buttonPrimary}`}>שמור</button>
+                    </form>
+                    <button onClick={() => setShowAddTypeModal(false)} className="absolute top-6 left-6 p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><X size={24}/></button>
+                </div>
+            )}
+
+            {showGroupSettings && (
+                <div className={`relative w-full max-w-md p-8 rounded-[3rem] shadow-2xl animate-in zoom-in-95 duration-300 ${theme.modalBg} ${theme.text}`}>
+                    <h3 className="text-2xl font-bold mb-8 text-center">ניהול הרשאות</h3>
+                    <div className="space-y-8">
+                        <div>
+                            <label className={`block text-sm font-bold mb-2 mr-4 ${theme.textSub}`}>הוסף מפקד</label>
+                            <form onSubmit={handleAddEditorToGroup} className="flex gap-3">
+                                <input name="editorUsername" required placeholder="שם משתמש..." className={`flex-1 rounded-full px-6 py-3 outline-none ${theme.input}`} />
+                                <button className={`p-3 rounded-full aspect-square flex items-center justify-center ${theme.buttonPrimary}`}><UserPlus size={24}/></button>
+                            </form>
+                        </div>
+                        <div className={`border rounded-[2rem] overflow-hidden ${isDarkMode ? 'border-[#3E4F46]' : 'border-[#E8ECE9]'}`}>
+                            <div className={`p-4 border-b flex justify-between items-center ${isDarkMode ? 'bg-[#1A2421]/50 border-[#3E4F46]' : 'bg-[#F0F4F2] border-[#E8ECE9]'}`}>
+                                <span className="font-bold text-sm">{selectedGroup.ownerName} (ראשי)</span>
+                                <Shield size={16} className={theme.accent} />
+                            </div>
+                            {selectedGroup.authorizedUsers?.map(u => (
+                                <div key={u} className="p-4 flex justify-between items-center hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                                    <span className="text-sm font-medium">{u}</span>
+                                    <button onClick={() => handleRemoveEditor(u)} className="text-[#F2D5D5] hover:bg-[#3E2222] p-2 rounded-full transition-colors"><Trash2 size={18} /></button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <button onClick={() => setShowGroupSettings(false)} className="absolute top-6 left-6 p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><X size={24}/></button>
+                </div>
+            )}
+
+            {showDefectReport && selectedItem && (
+               <DefectReportModal 
+                 item={selectedItem} 
+                 onClose={() => { setShowDefectReport(false); setSelectedItem(null); }} 
+                 onGenerate={generateDefectReport} 
+                 onStatusChange={handleStatusChange} 
+                 isLoading={isLLMLoading}
+                 theme={theme}
+               />
+            )}
+         </div>
+      )}
+    </AppContent>
+  );
+}
+
+function DefectReportModal({ item, onClose, onGenerate, onStatusChange, isLoading, theme }) {
+  const [desc, setDesc] = useState('');
+  const [report, setReport] = useState('');
+  const [status, setStatus] = useState('damaged');
+
+  const handleGen = async () => {
+    if(!desc) return;
+    const txt = await onGenerate(item, desc);
+    setReport(txt);
+  };
+
+  return (
+    <div className={`relative w-full max-w-lg p-8 rounded-[3rem] shadow-2xl animate-in zoom-in-95 duration-300 ${theme.modalBg} ${theme.text}`} dir="rtl">
+        <h3 className="text-2xl font-bold mb-6 flex items-center justify-center gap-3 text-[#F2D5D5]"><AlertTriangle/> דיווח תקלה</h3>
+        <div className="space-y-5">
+            <textarea rows="3" value={desc} onChange={e=>setDesc(e.target.value)} placeholder="מה הבעיה? (לדוגמא: קרע ברצועה)" className={`w-full rounded-[2rem] p-5 outline-none text-lg resize-none ${theme.input}`}/>
+            <div className="flex gap-3">
+                <select value={status} onChange={e=>setStatus(e.target.value)} className={`flex-1 rounded-full px-6 py-3 outline-none text-lg appearance-none ${theme.input}`}>
+                    <option value="damaged">פגום</option>
+                    <option value="missing">חסר</option>
+                    <option value="maintenance">בתיקון</option>
+                </select>
+                <button onClick={handleGen} disabled={isLoading} className={`px-6 py-3 rounded-full font-bold shadow-md ${theme.buttonSecondary}`}>
+                    {isLoading ? '...' : <Edit size={24}/>}
+                </button>
+            </div>
+            {report && <textarea rows="5" value={report} onChange={e=>setReport(e.target.value)} className={`w-full rounded-[2rem] p-5 text-sm font-mono resize-none ${theme.input}`}/>}
+            <button onClick={() => { onStatusChange(item, status); onClose(); }} disabled={!report} className={`w-full py-4 rounded-full font-bold text-lg shadow-lg ${report ? 'bg-[#3E2222] text-[#F2D5D5] hover:bg-[#613838]' : 'bg-gray-300 text-gray-500'}`}>
+                שלח דיווח
+            </button>
+        </div>
+        <button onClick={onClose} className="absolute top-6 left-6 p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><X size={24}/></button>
+    </div>
+  );
+}
