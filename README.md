@@ -56,4 +56,4 @@ GearUp provides a shared platform where:
 ![Screenshot 4](assets/%D7%A6%D7%99%D7%9C%D7%95%D7%9D%20%D7%9E%D7%A1%D7%9A%202026-01-12%20%D7%91-21.26.32.png)
 ![Screenshot 5](assets/%D7%A6%D7%99%D7%9C%D7%95%D7%9D%20%D7%9E%D7%A1%D7%9A%202026-01-12%20%D7%91-21.26.57.png)
 ![Screenshot 6](assets/%D7%A6%D7%99%D7%9C%D7%95%D7%9D%20%D7%9E%D7%A1%D7%9A%202026-01-12%20%D7%91-21.27.13.png)
-![Screenshot 7](assets/%D7%A6%D7%99%D7%9C%D7%95%D7%9D%20%D7%A1%D7%9A%202026-01-12%20%D7%91-21.27.30.png)
+![Screenshot 7](assets/%D7%A6%D7%99%D7%9C%D7%95%D7%9D%20%D7%9E%D7%A1%D7%9A%202026-01-12%20%D7%91-21.27.30.png)
