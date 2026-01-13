@@ -48,6 +48,11 @@ GearUp provides a shared platform where:
 - LinkedIn: https://www.linkedin.com/in/erel-berdugo-772497363/
 - Email: erelb16@gmail.com
 
+
+## Product Spec
+- [GearUp – Product Specification (PRD)](spec/GearUp%20%E2%80%93%20Product%20Specification%20(PRD).pdf)
+
+
 ## Screenshots
 
 ![Screenshot 1](assets/%D7%A6%D7%99%D7%9C%D7%95%D7%9D%20%D7%9E%D7%A1%D7%9A%202026-01-12%20%D7%91-21.23.11.png)
